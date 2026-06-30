@@ -1,0 +1,6 @@
+{
+  "name": "Forex Lot Size Calculator",
+  "description": "An elite trading dashboard with a live-price forex lot size calculator and integrated macroeconomic bias analysis engine.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
