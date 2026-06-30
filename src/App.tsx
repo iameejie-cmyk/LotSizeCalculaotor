@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { FOREX_PAIRS, MACRO_PRESETS } from "./constants";
 import { TradeSetup, TradeDirection, MacroBiasResult, LivePrice } from "./types";
-import { calculateLotSize } from "./utils/calculator";
+import { calculateLotSize, getPipSize } from "./utils/calculator";
 
 export default function App() {
   // --- STATE MANAGEMENT ---
@@ -35,6 +35,9 @@ export default function App() {
   const [userEditedEntry, setUserEditedEntry] = useState<boolean>(false);
   const [userEditedStop, setUserEditedStop] = useState<boolean>(false);
 
+  // Take Profit Projection target
+  const [tpTargetRatio, setTpTargetRatio] = useState<number>(2.0);
+
   // Live Exchange Rates
   const [rates, setRates] = useState<{ [key: string]: number }>({});
   const [loadingRates, setLoadingRates] = useState<boolean>(false);
@@ -43,6 +46,7 @@ export default function App() {
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
 
   // Macro Engine Inputs
+  const [useAutoResearch, setUseAutoResearch] = useState<boolean>(true);
   const [monetaryPolicy, setMonetaryPolicy] = useState<string>(MACRO_PRESETS.monetaryPolicy[4].value);
   const [geopolitics, setGeopolitics] = useState<string>(MACRO_PRESETS.geopolitics[0].value);
   const [cbParticipation, setCbParticipation] = useState<string>(MACRO_PRESETS.cbParticipation[0].value);
@@ -126,10 +130,11 @@ export default function App() {
         },
         body: JSON.stringify({
           assetSymbol: selectedSymbol,
-          monetaryPolicy,
-          geopolitics,
-          cbParticipation,
-          marketMood,
+          autoAnalyze: useAutoResearch,
+          monetaryPolicy: useAutoResearch ? undefined : monetaryPolicy,
+          geopolitics: useAutoResearch ? undefined : geopolitics,
+          cbParticipation: useAutoResearch ? undefined : cbParticipation,
+          marketMood: useAutoResearch ? undefined : marketMood,
         }),
       });
 
@@ -794,30 +799,108 @@ export default function App() {
             )}
           </div>
 
-          {/* BOTTOM BOX: TAKE PROFIT ESTIMATIONS */}
+          {/* BOTTOM BOX: FRACTIONAL TAKE PROFIT LOT SIZING CALCULATOR */}
           {!calculationResult.isInvalid && (
-            <div className="bg-white border border-[#E8E4DB] rounded-3xl p-6 shadow-xs">
-              <h3 className="text-xs uppercase tracking-[0.2em] text-[#8C7B6C] font-extrabold mb-4 flex items-center gap-1.5">
-                <Target className="w-4 h-4 text-[#8EA87C]" /> Profit Targets (R:R Ratio)
-              </h3>
-              
-              <div className="grid grid-cols-2 gap-3">
-                {calculationResult.targets.map((tgt) => (
-                  <div key={tgt.ratio} className="p-3 bg-[#F7F5F0] rounded-xl border border-[#E8E4DB] flex flex-col justify-between">
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="px-1.5 py-0.5 bg-[#5A5A40] text-white text-[9px] font-extrabold rounded-sm">
-                        1:{tgt.ratio} R:R
-                      </span>
-                      <span className="text-[10px] text-[#8C7B6C] font-mono">+{tgt.pips.toFixed(1)}p</span>
-                    </div>
-                    <div className="text-sm font-mono font-bold text-[#2C2C24] leading-tight">
-                      {tgt.price.toFixed(currentPair.pipDecimalPlaces + 1)}
-                    </div>
-                    <div className="text-[11px] font-bold text-[#8EA87C] mt-1 font-mono">
-                      +${tgt.profitCash.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} USD
-                    </div>
+            <div className="bg-white border border-[#E8E4DB] rounded-3xl p-6 shadow-xs space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#F7F5F0] pb-3">
+                <div>
+                  <h3 className="text-xs uppercase tracking-[0.2em] text-[#8C7B6C] font-extrabold flex items-center gap-1.5">
+                    <Target className="w-4 h-4 text-[#8EA87C]" /> Scale-Out TP Calculator
+                  </h3>
+                  <p className="text-[10px] text-[#8C7B6C] font-bold mt-1">
+                    Based on recommended lot: <strong className="font-mono text-[#5A5A40] text-xs">{calculationResult.totalLotSize.toFixed(2)} Lots</strong>
+                  </p>
+                </div>
+                
+                {/* Projected Target Selector */}
+                <div className="flex items-center gap-1">
+                  <span className="text-[10px] font-bold text-[#8C7B6C] uppercase mr-1">R:R Goal:</span>
+                  {[1.0, 2.0, 3.0, 4.0].map((ratio) => (
+                    <button
+                      key={ratio}
+                      type="button"
+                      onClick={() => setTpTargetRatio(ratio)}
+                      className={`px-2 py-1 text-[11px] font-bold rounded-md border transition-all ${
+                        tpTargetRatio === ratio
+                          ? "bg-[#5A5A40] text-white border-[#5A5A40] shadow-2xs"
+                          : "bg-[#F7F5F0] text-[#8C7B6C] border-[#E8E4DB] hover:bg-white"
+                      }`}
+                    >
+                      1:{ratio}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Dynamic projections details at selected R:R */}
+              <div className="bg-[#F7F5F0] rounded-2xl p-4 border border-[#E8E4DB] flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                <div>
+                  <div className="text-[10px] font-bold text-[#8C7B6C] uppercase tracking-wider">Projected Target (1:{tpTargetRatio} R:R)</div>
+                  <div className="text-sm font-mono font-bold text-[#2C2C24] mt-0.5">
+                    Target Price: <span className="text-[#8EA87C] font-black">
+                      {(() => {
+                        const stopLossPips = calculationResult.stopLossPips;
+                        const targetPips = stopLossPips * tpTargetRatio;
+                        const pipSize = getPipSize(selectedSymbol);
+                        const priceOffset = targetPips * pipSize;
+                        const price = direction === "BUY" ? entryPrice + priceOffset : entryPrice - priceOffset;
+                        return price.toFixed(currentPair.pipDecimalPlaces + 1);
+                      })()}
+                    </span>
                   </div>
-                ))}
+                  <div className="text-[10px] text-[#8C7B6C] font-mono mt-0.5">
+                    Target Gain: <span className="text-[#8EA87C] font-bold">+${(calculationResult.riskCash * tpTargetRatio).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD</span>
+                  </div>
+                </div>
+                
+                <div className="flex flex-col items-end shrink-0">
+                  <span className="text-[9px] uppercase font-bold text-[#8EA87C] bg-[#e2f0d9] px-2.5 py-1 rounded-md border border-[#b8d6a3]">
+                    Secure Profit Partial
+                  </span>
+                </div>
+              </div>
+
+              {/* Grid of the 4 Fractional Take Profit levels: 10%, 25%, 50%, 80% */}
+              <div className="grid grid-cols-2 gap-3">
+                {[10, 25, 50, 80].map((percent) => {
+                  const targetLots = Number((calculationResult.totalLotSize * (percent / 100)).toFixed(2));
+                  const remainingLots = Math.max(0, Number((calculationResult.totalLotSize - targetLots).toFixed(2)));
+                  const securedProfit = calculationResult.riskCash * tpTargetRatio * (percent / 100);
+                  
+                  return (
+                    <div key={percent} className="p-5 bg-white border border-[#E8E4DB] rounded-2xl flex flex-col justify-between hover:border-[#8EA87C] hover:shadow-xs transition-all relative overflow-hidden group">
+                      <div className="absolute top-0 right-0 h-full w-1.5 bg-[#8EA87C]/20 group-hover:bg-[#8EA87C] transition-all"></div>
+                      
+                      <div className="flex flex-col items-center justify-center text-center mt-1 mb-4 pb-3 border-b border-[#F7F5F0]">
+                        <span className="text-4xl font-normal text-[#8EA87C] font-mono leading-none">+{percent}%</span>
+                        <span className="text-[9px] text-[#8C7B6C] font-extrabold uppercase tracking-widest mt-2">Scale-Out Target</span>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <div className="flex flex-col bg-[#F7F5F0] rounded-xl p-2.5 border border-[#E8E4DB]/40 text-center">
+                          <span className="text-[10px] text-[#8C7B6C] font-extrabold uppercase tracking-widest">Lots to Close</span>
+                          <span className="text-2xl font-mono font-black text-[#2C2C24] tracking-tight mt-0.5">
+                            {targetLots.toFixed(2)}
+                          </span>
+                        </div>
+                        
+                        <div className="flex justify-between items-baseline px-0.5">
+                          <span className="text-[10px] text-[#8C7B6C] font-bold uppercase tracking-wider">Remaining:</span>
+                          <span className="text-xs font-mono font-extrabold text-[#5A5A40]">
+                            {remainingLots.toFixed(2)} L
+                          </span>
+                        </div>
+
+                        <div className="pt-2 border-t border-[#F7F5F0] flex justify-between items-center mt-1 px-0.5">
+                          <span className="text-[10px] text-[#8C7B6C] font-black uppercase tracking-wider">Secured Profit:</span>
+                          <span className="text-sm font-mono font-black text-[#8EA87C]">
+                            +${securedProfit.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -887,149 +970,221 @@ export default function App() {
             {/* VECTOR INPUT FORM (lg:col-span-6) */}
             <div className="lg:col-span-6 space-y-5">
               
-              <div className="p-4 bg-[#FDFCF9] rounded-2xl border border-[#E8E4DB] space-y-4">
-                
-                {/* Vector 1: Monetary Policy */}
-                <div className="flex flex-col gap-1.5">
-                  <div className="flex justify-between items-center">
-                    <label className="text-xs font-bold text-[#5A5A40] uppercase tracking-wider">
-                      1. Monetary Policy & Interest Rates
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setCustomMonetary(!customMonetary)}
-                      className="bg-[#F7F5F0] hover:bg-[#5A5A40] hover:text-white border border-[#E8E4DB] px-3 py-1.5 rounded-lg text-xs font-bold text-[#8C7B6C] transition-all"
-                    >
-                      {customMonetary ? "Use Preset" : "Custom Text"}
-                    </button>
-                  </div>
-                  {customMonetary ? (
-                    <textarea
-                      value={monetaryPolicy}
-                      onChange={(e) => setMonetaryPolicy(e.target.value)}
-                      className="w-full bg-white border border-[#E8E4DB] rounded-xl p-3 text-xs focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
-                      rows={2}
-                      placeholder="Enter custom central bank monetary policy bias..."
-                    />
-                  ) : (
-                    <select
-                      value={monetaryPolicy}
-                      onChange={(e) => setMonetaryPolicy(e.target.value)}
-                      className="w-full bg-white border border-[#E8E4DB] rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
-                    >
-                      {MACRO_PRESETS.monetaryPolicy.map((item, idx) => (
-                        <option key={idx} value={item.value}>{item.label}</option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-
-                {/* Vector 2: Geopolitical Tensions */}
-                <div className="flex flex-col gap-1.5">
-                  <div className="flex justify-between items-center">
-                    <label className="text-xs font-bold text-[#5A5A40] uppercase tracking-wider">
-                      2. Geopolitical Tensions
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setCustomGeopolitics(!customGeopolitics)}
-                      className="bg-[#F7F5F0] hover:bg-[#5A5A40] hover:text-white border border-[#E8E4DB] px-3 py-1.5 rounded-lg text-xs font-bold text-[#8C7B6C] transition-all"
-                    >
-                      {customGeopolitics ? "Use Preset" : "Custom Text"}
-                    </button>
-                  </div>
-                  {customGeopolitics ? (
-                    <textarea
-                      value={geopolitics}
-                      onChange={(e) => setGeopolitics(e.target.value)}
-                      className="w-full bg-white border border-[#E8E4DB] rounded-xl p-3 text-xs focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
-                      rows={2}
-                      placeholder="Enter custom geopolitical scenarios..."
-                    />
-                  ) : (
-                    <select
-                      value={geopolitics}
-                      onChange={(e) => setGeopolitics(e.target.value)}
-                      className="w-full bg-white border border-[#E8E4DB] rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
-                    >
-                      {MACRO_PRESETS.geopolitics.map((item, idx) => (
-                        <option key={idx} value={item.value}>{item.label}</option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-
-                {/* Vector 3: CB / Institutional flows */}
-                <div className="flex flex-col gap-1.5">
-                  <div className="flex justify-between items-center">
-                    <label className="text-xs font-bold text-[#5A5A40] uppercase tracking-wider">
-                      3. Institutional / CB Participation
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setCustomCb(!customCb)}
-                      className="bg-[#F7F5F0] hover:bg-[#5A5A40] hover:text-white border border-[#E8E4DB] px-3 py-1.5 rounded-lg text-xs font-bold text-[#8C7B6C] transition-all"
-                    >
-                      {customCb ? "Use Preset" : "Custom Text"}
-                    </button>
-                  </div>
-                  {customCb ? (
-                    <textarea
-                      value={cbParticipation}
-                      onChange={(e) => setCbParticipation(e.target.value)}
-                      className="w-full bg-white border border-[#E8E4DB] rounded-xl p-3 text-xs focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
-                      rows={2}
-                      placeholder="Enter custom institutional flows detail..."
-                    />
-                  ) : (
-                    <select
-                      value={cbParticipation}
-                      onChange={(e) => setCbParticipation(e.target.value)}
-                      className="w-full bg-white border border-[#E8E4DB] rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
-                    >
-                      {MACRO_PRESETS.cbParticipation.map((item, idx) => (
-                        <option key={idx} value={item.value}>{item.label}</option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-
-                {/* Vector 4: Market Mood */}
-                <div className="flex flex-col gap-1.5">
-                  <div className="flex justify-between items-center">
-                    <label className="text-xs font-bold text-[#5A5A40] uppercase tracking-wider">
-                      4. Market Mood & Sentiment (Risk-On / Risk-Off)
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setCustomMood(!customMood)}
-                      className="bg-[#F7F5F0] hover:bg-[#5A5A40] hover:text-white border border-[#E8E4DB] px-3 py-1.5 rounded-lg text-xs font-bold text-[#8C7B6C] transition-all"
-                    >
-                      {customMood ? "Use Preset" : "Custom Text"}
-                    </button>
-                  </div>
-                  {customMood ? (
-                    <textarea
-                      value={marketMood}
-                      onChange={(e) => setMarketMood(e.target.value)}
-                      className="w-full bg-white border border-[#E8E4DB] rounded-xl p-3 text-xs focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
-                      rows={2}
-                      placeholder="Enter custom equity, VIX, spreads mood metrics..."
-                    />
-                  ) : (
-                    <select
-                      value={marketMood}
-                      onChange={(e) => setMarketMood(e.target.value)}
-                      className="w-full bg-white border border-[#E8E4DB] rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
-                    >
-                      {MACRO_PRESETS.marketMood.map((item, idx) => (
-                        <option key={idx} value={item.value}>{item.label}</option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-
+              {/* Mode Toggle Tabs */}
+              <div className="flex p-1 bg-[#F7F5F0] border border-[#E8E4DB] rounded-2xl">
+                <button
+                  type="button"
+                  onClick={() => setUseAutoResearch(true)}
+                  className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-xs sm:text-sm font-extrabold transition-all duration-200 ${
+                    useAutoResearch
+                      ? "bg-[#5A5A40] text-white shadow-xs"
+                      : "text-[#8C7B6C] hover:bg-white/50"
+                  }`}
+                >
+                  <Sparkles className="w-4 h-4" /> AI Auto-Research
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUseAutoResearch(false)}
+                  className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-xs sm:text-sm font-extrabold transition-all duration-200 ${
+                    !useAutoResearch
+                      ? "bg-[#5A5A40] text-white shadow-xs"
+                      : "text-[#8C7B6C] hover:bg-white/50"
+                  }`}
+                >
+                  <SlidersHorizontal className="w-4 h-4" /> Manual Presets
+                </button>
               </div>
+
+              {useAutoResearch ? (
+                /* AUTOMATED MODE VISUAL BLOCK */
+                <div className="p-6 bg-[#FDFCF9] rounded-2xl border border-[#E8E4DB] space-y-4 shadow-3xs">
+                  <div className="flex items-center gap-3 text-[#5A5A40]">
+                    <div className="p-2.5 bg-[#F7F5F0] rounded-xl border border-[#E8E4DB]">
+                      <Sparkles className="w-6 h-6 animate-pulse text-[#8EA87C]" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black text-[#2C2C24]">Grounding & Web Research Enabled</h3>
+                      <p className="text-[11px] text-[#8C7B6C] font-semibold">Gemini 3.5 live analytical engine</p>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-[#8C7B6C] leading-relaxed">
+                    When you click <strong>Synthesize Market Bias</strong>, the system activates automated search grounding to extract the latest real-world macro data for <span className="font-mono text-xs font-bold text-[#5A5A40] bg-[#F7F5F0] px-1.5 py-0.5 rounded-md">{selectedSymbol}</span>:
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-3 pt-2">
+                    <div className="p-3 bg-white rounded-xl border border-[#E8E4DB] space-y-1">
+                      <span className="text-[10px] uppercase font-bold tracking-wider text-[#5A5A40]">1. Monetary Policy</span>
+                      <p className="text-[10px] text-[#8C7B6C] leading-normal font-medium">Real-world central bank interest rates, policy bias, and hawk/dove sentiments.</p>
+                    </div>
+                    <div className="p-3 bg-white rounded-xl border border-[#E8E4DB] space-y-1">
+                      <span className="text-[10px] uppercase font-bold tracking-wider text-[#5A5A40]">2. Geopolitics</span>
+                      <p className="text-[10px] text-[#8C7B6C] leading-normal font-medium">Live sovereign risks, conflicts, trade barriers, and global tensions index.</p>
+                    </div>
+                    <div className="p-3 bg-white rounded-xl border border-[#E8E4DB] space-y-1">
+                      <span className="text-[10px] uppercase font-bold tracking-wider text-[#5A5A40]">3. Institutional Flows</span>
+                      <p className="text-[10px] text-[#8C7B6C] leading-normal font-medium">Central bank sovereign buying, ETF inflows, and asset accumulation phases.</p>
+                    </div>
+                    <div className="p-3 bg-white rounded-xl border border-[#E8E4DB] space-y-1">
+                      <span className="text-[10px] uppercase font-bold tracking-wider text-[#5A5A40]">4. Market Mood</span>
+                      <p className="text-[10px] text-[#8C7B6C] leading-normal font-medium">Risk-On/Risk-Off indices, VIX spikes, high-yield spreads, and equities trends.</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-[#f2f6ee] border border-[#d2e2c8] rounded-xl p-3 text-[11px] text-[#4d663b] leading-relaxed flex gap-2">
+                    <Info className="w-4 h-4 shrink-0 text-[#8EA87C] mt-0.5" />
+                    <span>
+                      <strong>Institutional Grade Output:</strong> Returns live macroeconomic scores (-100 to +100), calculated bias level, custom risk multiplier, and a detailed cross-vector synthesis.
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                /* MANUAL MANUAL PRESETS FORM */
+                <div className="p-4 bg-[#FDFCF9] rounded-2xl border border-[#E8E4DB] space-y-4">
+                  
+                  {/* Vector 1: Monetary Policy */}
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex justify-between items-center">
+                      <label className="text-xs font-bold text-[#5A5A40] uppercase tracking-wider">
+                        1. Monetary Policy & Interest Rates
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setCustomMonetary(!customMonetary)}
+                        className="bg-[#F7F5F0] hover:bg-[#5A5A40] hover:text-white border border-[#E8E4DB] px-3 py-1.5 rounded-lg text-xs font-bold text-[#8C7B6C] transition-all"
+                      >
+                        {customMonetary ? "Use Preset" : "Custom Text"}
+                      </button>
+                    </div>
+                    {customMonetary ? (
+                      <textarea
+                        value={monetaryPolicy}
+                        onChange={(e) => setMonetaryPolicy(e.target.value)}
+                        className="w-full bg-white border border-[#E8E4DB] rounded-xl p-3 text-xs focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
+                        rows={2}
+                        placeholder="Enter custom central bank monetary policy bias..."
+                      />
+                    ) : (
+                      <select
+                        value={monetaryPolicy}
+                        onChange={(e) => setMonetaryPolicy(e.target.value)}
+                        className="w-full bg-white border border-[#E8E4DB] rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
+                      >
+                        {MACRO_PRESETS.monetaryPolicy.map((item, idx) => (
+                          <option key={idx} value={item.value}>{item.label}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+
+                  {/* Vector 2: Geopolitical Tensions */}
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex justify-between items-center">
+                      <label className="text-xs font-bold text-[#5A5A40] uppercase tracking-wider">
+                        2. Geopolitical Tensions
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setCustomGeopolitics(!customGeopolitics)}
+                        className="bg-[#F7F5F0] hover:bg-[#5A5A40] hover:text-white border border-[#E8E4DB] px-3 py-1.5 rounded-lg text-xs font-bold text-[#8C7B6C] transition-all"
+                      >
+                        {customGeopolitics ? "Use Preset" : "Custom Text"}
+                      </button>
+                    </div>
+                    {customGeopolitics ? (
+                      <textarea
+                        value={geopolitics}
+                        onChange={(e) => setGeopolitics(e.target.value)}
+                        className="w-full bg-white border border-[#E8E4DB] rounded-xl p-3 text-xs focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
+                        rows={2}
+                        placeholder="Enter custom geopolitical scenarios..."
+                      />
+                    ) : (
+                      <select
+                        value={geopolitics}
+                        onChange={(e) => setGeopolitics(e.target.value)}
+                        className="w-full bg-white border border-[#E8E4DB] rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
+                      >
+                        {MACRO_PRESETS.geopolitics.map((item, idx) => (
+                          <option key={idx} value={item.value}>{item.label}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+
+                  {/* Vector 3: CB / Institutional flows */}
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex justify-between items-center">
+                      <label className="text-xs font-bold text-[#5A5A40] uppercase tracking-wider">
+                        3. Institutional / CB Participation
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setCustomCb(!customCb)}
+                        className="bg-[#F7F5F0] hover:bg-[#5A5A40] hover:text-white border border-[#E8E4DB] px-3 py-1.5 rounded-lg text-xs font-bold text-[#8C7B6C] transition-all"
+                      >
+                        {customCb ? "Use Preset" : "Custom Text"}
+                      </button>
+                    </div>
+                    {customCb ? (
+                      <textarea
+                        value={cbParticipation}
+                        onChange={(e) => setCbParticipation(e.target.value)}
+                        className="w-full bg-white border border-[#E8E4DB] rounded-xl p-3 text-xs focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
+                        rows={2}
+                        placeholder="Enter custom institutional flows detail..."
+                      />
+                    ) : (
+                      <select
+                        value={cbParticipation}
+                        onChange={(e) => setCbParticipation(e.target.value)}
+                        className="w-full bg-white border border-[#E8E4DB] rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
+                      >
+                        {MACRO_PRESETS.cbParticipation.map((item, idx) => (
+                          <option key={idx} value={item.value}>{item.label}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+
+                  {/* Vector 4: Market Mood */}
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex justify-between items-center">
+                      <label className="text-xs font-bold text-[#5A5A40] uppercase tracking-wider">
+                        4. Market Mood & Sentiment (Risk-On / Risk-Off)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setCustomMood(!customMood)}
+                        className="bg-[#F7F5F0] hover:bg-[#5A5A40] hover:text-white border border-[#E8E4DB] px-3 py-1.5 rounded-lg text-xs font-bold text-[#8C7B6C] transition-all"
+                      >
+                        {customMood ? "Use Preset" : "Custom Text"}
+                      </button>
+                    </div>
+                    {customMood ? (
+                      <textarea
+                        value={marketMood}
+                        onChange={(e) => setMarketMood(e.target.value)}
+                        className="w-full bg-white border border-[#E8E4DB] rounded-xl p-3 text-xs focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
+                        rows={2}
+                        placeholder="Enter custom equity, VIX, spreads mood metrics..."
+                      />
+                    ) : (
+                      <select
+                        value={marketMood}
+                        onChange={(e) => setMarketMood(e.target.value)}
+                        className="w-full bg-white border border-[#E8E4DB] rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-[#5A5A40]"
+                      >
+                        {MACRO_PRESETS.marketMood.map((item, idx) => (
+                          <option key={idx} value={item.value}>{item.label}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+
+                </div>
+              )}
 
             </div>
 

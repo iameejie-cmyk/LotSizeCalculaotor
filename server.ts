@@ -117,7 +117,7 @@ app.get("/api/rates", async (req, res) => {
 
 // API Route for macroeconomic bias analysis
 app.post("/api/analyze", async (req, res) => {
-  const { assetSymbol, monetaryPolicy, geopolitics, cbParticipation, marketMood } = req.body;
+  const { assetSymbol, autoAnalyze, monetaryPolicy, geopolitics, cbParticipation, marketMood } = req.body;
 
   if (!assetSymbol) {
     return res.status(400).json({ success: false, error: "Asset symbol is required" });
@@ -126,7 +126,39 @@ app.post("/api/analyze", async (req, res) => {
   try {
     const client = getGeminiClient();
 
-    const prompt = `
+    let prompt = "";
+    if (autoAnalyze) {
+      prompt = `
+You are an elite institutional macroeconomic researcher and sovereign wealth fund risk manager.
+Your task is to conduct a FULL, AUTOMATED real-time macroeconomic analysis and compute a highly accurate, forward-looking aggregate market bias for the asset "${assetSymbol}" (e.g., EUR/USD, XAU/USD, USD/JPY, GBP/USD, etc.).
+
+Since you are analyzing "${assetSymbol}" in 2026, you MUST utilize the search tool to search for real-world, live interest rate policies, central bank statements (Federal Reserve, ECB, Bank of Japan, Bank of England, etc., depending on the pair currencies), hot geopolitical tensions, institutional participation (such as central bank gold buying, global ETF flows, institutional custody trends), and global market mood/sentiment (including VIX levels, high-yield credit spreads, and stock market indexes).
+
+Evaluate based on these precise vectors:
+1. Monetary Policy & Interest Rates:
+   - Search for the real-world current interest rates of the currencies involved in the "${assetSymbol}" pair.
+   - Summarize the latest policy decisions, statements (Hawkish vs. Dovish), and interest rate projections.
+2. Geopolitical Tensions:
+   - Search for the latest major geopolitical flashpoints, war/sanction headlines, trade policy frictions, or sovereign risks affecting these currencies.
+3. Institutional/Central Bank Participation:
+   - Search for net institutional/central bank behavior (e.g., PBOC gold accumulation, gold ETF flows, commercial bank custody accumulation).
+4. Market Mood & Sentiment:
+   - Search for recent global sentiment indicators, e.g., the VIX index, equity trends (S&P 500), high-yield credit spreads, signaling systemic Risk-On or Risk-Off.
+
+Conduct an expert-level, institutional-grade macro evaluation. For each of the 4 vectors, assign a rating ('Bullish', 'Bearish', or 'Neutral'), a score from -2 (Very Bearish) to +2 (Very Bullish), and write a highly professional, concise 3-4 sentence analysis featuring real-world data points, percentages, rates, or figures you discovered.
+
+Then, aggregate these inputs to calculate:
+- An aggregate market bias: 'Strong Bullish', 'Bullish', 'Neutral', 'Bearish', 'Strong Bearish'.
+- An aggregate score on a scale of -100 to +100.
+- An executive summary detailing the interplay between the vectors and your macro thesis.
+- Critical trading implications for the asset.
+- Targeted risk management advice.
+- A suggested risk multiplier (e.g. 1.0 to 1.5 for strong confluences where macro bias perfectly aligns with trades, 0.25 to 0.75 for counter-trend or chaotic states).
+
+Return your output strictly as a structured JSON object matching the requested schema. Use expert financial terminology and maintain a clean institutional tone.
+`;
+    } else {
+      prompt = `
 You are an elite macroeconomic analyst and framework engine for a trading dashboard. Your job is to intake four specific inputs for a given asset and calculate an aggregate market bias (Strong Bullish, Bullish, Neutral, Bearish, Strong Bearish).
 
 Analyze the asset "${assetSymbol}" using these user-provided macroeconomic parameters:
@@ -137,7 +169,7 @@ Analyze the asset "${assetSymbol}" using these user-provided macroeconomic param
 
 Conduct an expert-level, institutional grade macro evaluation. For each of the 4 vectors, assign a rating ('Bullish', 'Bearish', or 'Neutral'), a score from -2 (Very Bearish) to +2 (Very Bullish), and write a highly professional, concise 2-3 sentence analysis.
 Then, aggregate these inputs to calculate:
-- An aggregate market bias: 'Strong Bullish' (mostly positive), 'Bullish' (leaning positive), 'Neutral' (balanced or conflicting), 'Bearish' (leaning negative), 'Strong Bearish' (mostly negative).
+- An aggregate market bias: 'Strong Bullish', 'Bullish', 'Neutral', 'Bearish', 'Strong Bearish'.
 - An aggregate score on a scale of -100 to +100.
 - An executive summary detailing the interplay between the vectors.
 - Critical trading implications for the asset.
@@ -146,89 +178,96 @@ Then, aggregate these inputs to calculate:
 
 Return your output strictly as a structured JSON object matching the requested schema. Use expert financial terminology, maintain clean institutional tone, and do not add any markdown wrapper outside of the requested JSON.
 `;
+    }
+
+    const config: any = {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          assetSymbol: { type: Type.STRING },
+          bias: { 
+            type: Type.STRING, 
+            description: "The calculated aggregate market bias. Must be exactly one of: 'Strong Bullish', 'Bullish', 'Neutral', 'Bearish', 'Strong Bearish'" 
+          },
+          aggregateScore: { 
+            type: Type.NUMBER, 
+            description: "The aggregate confidence score of the bias from -100 (Strongly Bearish) to +100 (Strongly Bullish)" 
+          },
+          vectors: {
+            type: Type.OBJECT,
+            properties: {
+              monetaryPolicy: {
+                type: Type.OBJECT,
+                properties: {
+                  rating: { type: Type.STRING, description: "Must be exactly: 'Bullish', 'Bearish', or 'Neutral'" },
+                  score: { type: Type.NUMBER, description: "Vector score from -2 to +2" },
+                  analysis: { type: Type.STRING, description: "Concise expert analysis of monetary policy / interest rates impact." }
+                },
+                required: ["rating", "score", "analysis"]
+              },
+              geopolitics: {
+                type: Type.OBJECT,
+                properties: {
+                  rating: { type: Type.STRING, description: "Must be exactly: 'Bullish', 'Bearish', or 'Neutral'" },
+                  score: { type: Type.NUMBER, description: "Vector score from -2 to +2" },
+                  analysis: { type: Type.STRING, description: "Concise expert analysis of geopolitical tensions impact." }
+                },
+                required: ["rating", "score", "analysis"]
+              },
+              cbParticipation: {
+                type: Type.OBJECT,
+                properties: {
+                  rating: { type: Type.STRING, description: "Must be exactly: 'Bullish', 'Bearish', or 'Neutral'" },
+                  score: { type: Type.NUMBER, description: "Vector score from -2 to +2" },
+                  analysis: { type: Type.STRING, description: "Concise expert analysis of institutional and central bank flows." }
+                },
+                required: ["rating", "score", "analysis"]
+              },
+              marketMood: {
+                type: Type.OBJECT,
+                properties: {
+                  rating: { type: Type.STRING, description: "Must be exactly: 'Bullish', 'Bearish', or 'Neutral'" },
+                  score: { type: Type.NUMBER, description: "Vector score from -2 to +2" },
+                  analysis: { type: Type.STRING, description: "Concise expert analysis of Risk-On/Risk-Off mood, equity, VIX, credit spread dynamics." }
+                },
+                required: ["rating", "score", "analysis"]
+              }
+            },
+            required: ["monetaryPolicy", "geopolitics", "cbParticipation", "marketMood"]
+          },
+          executiveSummary: { 
+            type: Type.STRING, 
+            description: "Institutional-grade summary of how these core vectors synthesize and the macro thesis behind the bias." 
+          },
+          tradingImplications: { 
+            type: Type.STRING, 
+            description: "Strategic directional guidance and critical tactical levels or triggers to watch for this asset." 
+          },
+          riskManagementAdvice: { 
+            type: Type.STRING, 
+            description: "Macro-informed risk management advice (e.g. leverage recommendations, stop placement strategy, invalidation concepts)." 
+          },
+          suggestedRiskMultiplier: { 
+            type: Type.NUMBER, 
+            description: "Suggested position sizing multiplier from 0.25 to 1.5 based on alignment confidence." 
+          }
+        },
+        required: [
+          "assetSymbol", "bias", "aggregateScore", "vectors", 
+          "executiveSummary", "tradingImplications", "riskManagementAdvice", "suggestedRiskMultiplier"
+        ]
+      }
+    };
+
+    if (autoAnalyze) {
+      config.tools = [{ googleSearch: {} }];
+    }
 
     const response = await client.models.generateContent({
       model: "gemini-3.5-flash",
       contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            assetSymbol: { type: Type.STRING },
-            bias: { 
-              type: Type.STRING, 
-              description: "The calculated aggregate market bias. Must be exactly one of: 'Strong Bullish', 'Bullish', 'Neutral', 'Bearish', 'Strong Bearish'" 
-            },
-            aggregateScore: { 
-              type: Type.NUMBER, 
-              description: "The aggregate confidence score of the bias from -100 (Strongly Bearish) to +100 (Strongly Bullish)" 
-            },
-            vectors: {
-              type: Type.OBJECT,
-              properties: {
-                monetaryPolicy: {
-                  type: Type.OBJECT,
-                  properties: {
-                    rating: { type: Type.STRING, description: "Must be exactly: 'Bullish', 'Bearish', or 'Neutral'" },
-                    score: { type: Type.NUMBER, description: "Vector score from -2 to +2" },
-                    analysis: { type: Type.STRING, description: "Concise expert analysis of monetary policy / interest rates impact." }
-                  },
-                  required: ["rating", "score", "analysis"]
-                },
-                geopolitics: {
-                  type: Type.OBJECT,
-                  properties: {
-                    rating: { type: Type.STRING, description: "Must be exactly: 'Bullish', 'Bearish', or 'Neutral'" },
-                    score: { type: Type.NUMBER, description: "Vector score from -2 to +2" },
-                    analysis: { type: Type.STRING, description: "Concise expert analysis of geopolitical tensions impact." }
-                  },
-                  required: ["rating", "score", "analysis"]
-                },
-                cbParticipation: {
-                  type: Type.OBJECT,
-                  properties: {
-                    rating: { type: Type.STRING, description: "Must be exactly: 'Bullish', 'Bearish', or 'Neutral'" },
-                    score: { type: Type.NUMBER, description: "Vector score from -2 to +2" },
-                    analysis: { type: Type.STRING, description: "Concise expert analysis of institutional and central bank flows." }
-                  },
-                  required: ["rating", "score", "analysis"]
-                },
-                marketMood: {
-                  type: Type.OBJECT,
-                  properties: {
-                    rating: { type: Type.STRING, description: "Must be exactly: 'Bullish', 'Bearish', or 'Neutral'" },
-                    score: { type: Type.NUMBER, description: "Vector score from -2 to +2" },
-                    analysis: { type: Type.STRING, description: "Concise expert analysis of Risk-On/Risk-Off mood, equity, VIX, credit spread dynamics." }
-                  },
-                  required: ["rating", "score", "analysis"]
-                }
-              },
-              required: ["monetaryPolicy", "geopolitics", "cbParticipation", "marketMood"]
-            },
-            executiveSummary: { 
-              type: Type.STRING, 
-              description: "Institutional-grade summary of how these core vectors synthesize and the macro thesis behind the bias." 
-            },
-            tradingImplications: { 
-              type: Type.STRING, 
-              description: "Strategic directional guidance and critical tactical levels or triggers to watch for this asset." 
-            },
-            riskManagementAdvice: { 
-              type: Type.STRING, 
-              description: "Macro-informed risk management advice (e.g. leverage recommendations, stop placement strategy, invalidation concepts)." 
-            },
-            suggestedRiskMultiplier: { 
-              type: Type.NUMBER, 
-              description: "Suggested position sizing multiplier from 0.25 to 1.5 based on alignment confidence." 
-            }
-          },
-          required: [
-            "assetSymbol", "bias", "aggregateScore", "vectors", 
-            "executiveSummary", "tradingImplications", "riskManagementAdvice", "suggestedRiskMultiplier"
-          ]
-        }
-      }
+      config: config
     });
 
     const parsedResult = JSON.parse(response.text.trim());
@@ -236,6 +275,7 @@ Return your output strictly as a structured JSON object matching the requested s
       success: true,
       analysis: parsedResult,
       timestamp: new Date().toISOString(),
+      isRealAuto: !!autoAnalyze,
     });
   } catch (error: any) {
     console.error("Gemini macro analysis failed:", error.message || error);
